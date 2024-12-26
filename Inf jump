@@ -1,0 +1,4 @@
+local Github = 
+loadstring(game:HttpGet://raw.githubusercontent.com/ph699/natural disaster survival/main/souser'))()
+local window = Github:MakeWindow({Name = "tutorial", HidePremium = false, SaveConfig = true, ConfigFolder
+= "GithubTest"})
