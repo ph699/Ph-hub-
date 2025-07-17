@@ -1,27 +1,328 @@
-local Noclip = nil
-local Clip = nil
+-- Configuração principal
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local runService = game:GetService("RunService")
 
-function noclip()
-	Clip = false
-	local function Nocl()
-		if Clip == false and game.Players.LocalPlayer.Character ~= nil then
-			for _,v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
-				if v:IsA('BasePart') and v.CanCollide and v.Name ~= floatName then
-					v.CanCollide = false
-				end
-			end
-		end
-		wait(0.21) -- basic optimization
-	end
-	Noclip = game:GetService('RunService').Stepped:Connect(Nocl)
+-- Estado do poder
+local redActive = false
+local cooldown = false
+local handEffects = {}
+local barrierBlocks = {} -- Armazenará os blocos da barreira
+
+-- Criar interface móvel
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GojoPowers"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- Botão de toggle
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.new(0.3, 0, 0.15, 0)
+toggleButton.Position = UDim2.new(0.02, 0, 0.8, 0)
+toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+toggleButton.TextColor3 = Color3.new(1, 1, 1)
+toggleButton.Text = "ATIVAR PODER"
+toggleButton.TextScaled = true
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.ZIndex = 10
+toggleButton.Parent = screenGui
+
+-- Botão de ataque
+local attackButton = Instance.new("TextButton")
+attackButton.Name = "AttackButton"
+attackButton.Size = UDim2.new(0.3, 0, 0.15, 0)
+attackButton.Position = UDim2.new(0.68, 0, 0.8, 0)
+attackButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+attackButton.TextColor3 = Color3.new(1, 1, 1)
+attackButton.Text = "ATACAR"
+attackButton.TextScaled = true
+attackButton.Font = Enum.Font.GothamBold
+attackButton.Visible = false
+attackButton.ZIndex = 10
+attackButton.Parent = screenGui
+
+-- Função para ajustar botões
+local function adjustButtons()
+    local screenSize = workspace.CurrentCamera.ViewportSize
+    toggleButton.Size = UDim2.new(0.3, 0, 0.15, 0)
+    attackButton.Size = UDim2.new(0.3, 0, 0.15, 0)
+    
+    toggleButton.Position = UDim2.new(0.02, 0, 0.8, 0)
+    attackButton.Position = UDim2.new(0.68, 0, 0.8, 0)
 end
 
-function clip()
-	if Noclip then Noclip:Disconnect() end
-	Clip = true
+adjustButtons()
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(adjustButtons)
+
+-- Função para criar os blocos da barreira
+local function createBarrierBlocks()
+    -- Limpar blocos antigos
+    for _, block in ipairs(barrierBlocks) do
+        if block and block.Parent then
+            block:Destroy()
+        end
+    end
+    barrierBlocks = {}
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    -- Parâmetros da barreira
+    local numBlocks = 12  -- Número de blocos na barreira
+    local radius = 5      -- Raio da barreira
+    local height = 3      -- Altura da barreira
+    
+    -- Criar blocos em forma de anel
+    for i = 1, numBlocks do
+        local angle = (i / numBlocks) * math.pi * 2
+        
+        -- Calcular posição
+        local x = math.cos(angle) * radius
+        local z = math.sin(angle) * radius
+        local position = rootPart.Position + Vector3.new(x, height, z)
+        
+        -- Criar bloco
+        local block = Instance.new("Part")
+        block.BrickColor = BrickColor.new("Really red")
+        block.Material = Enum.Material.Neon
+        block.Size = Vector3.new(0.5, 0.5, 0.5)
+        block.Shape = Enum.PartType.Block
+        block.Transparency = 0.3
+        block.CanCollide = false
+        block.Anchored = false
+        block.CastShadow = false
+        block.Position = position
+        block.Parent = workspace
+        
+        -- Física personalizada
+        local bodyGyro = Instance.new("BodyGyro")
+        bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        bodyGyro.P = 10000
+        bodyGyro.Parent = block
+        
+        local bodyPosition = Instance.new("BodyPosition")
+        bodyPosition.MaxForce = Vector3.new(5000, 5000, 5000)
+        bodyPosition.P = 500
+        bodyPosition.Position = position
+        bodyPosition.Parent = block
+        
+        -- Efeito de partículas
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Color = ColorSequence.new(Color3.fromRGB(255, 50, 50))
+        emitter.Size = NumberSequence.new(0.1, 0.3)
+        emitter.Lifetime = NumberRange.new(0.5)
+        emitter.Rate = 20
+        emitter.Speed = NumberRange.new(1)
+        emitter.Parent = block
+        
+        table.insert(barrierBlocks, {block, bodyGyro, bodyPosition, emitter})
+    end
 end
 
-noclip() -- to toggle noclip() and clip()
+-- Atualizar a barreira (chamar a cada frame)
+local function updateBarrier()
+    if not redActive or #barrierBlocks == 0 then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local time = tick()
+    
+    for i, blockData in ipairs(barrierBlocks) do
+        local block, bodyGyro, bodyPosition = unpack(blockData)
+        
+        if block and bodyGyro and bodyPosition then
+            -- Calcular nova posição
+            local angle = (i / #barrierBlocks) * math.pi * 2 + time
+            local x = math.cos(angle) * 5
+            local z = math.sin(angle) * 5
+            local offset = Vector3.new(x, 3, z)
+            
+            -- Atualizar posição
+            bodyPosition.Position = rootPart.Position + offset
+            
+            -- Girar o bloco
+            bodyGyro.CFrame = CFrame.Angles(0, angle, 0)
+        end
+    end
+end
 
+-- Função para criar efeitos visuais
+local function createHandEffect(hand)
+    if not hand then return end
+    
+    local emitter = Instance.new("ParticleEmitter")
+    emitter.Color = ColorSequence.new(Color3.fromRGB(255, 50, 50))
+    emitter.Size = NumberSequence.new(0.2, 0.5)
+    emitter.Lifetime = NumberRange.new(0.5)
+    emitter.Rate = 50
+    emitter.Speed = NumberRange.new(2)
+    emitter.Parent = hand
+    
+    local light = Instance.new("PointLight")
+    light.Color = Color3.new(1, 0, 0)
+    light.Brightness = 5
+    light.Range = 5
+    light.Parent = hand
+    
+    return {emitter, light}
+end
 
+-- Ativar/desativar efeitos nas mãos
+local function toggleHandEffects(enable)
+    -- Limpar efeitos antigos
+    for _, effect in ipairs(handEffects) do
+        for _, obj in ipairs(effect) do
+            if obj and obj.Parent then
+                obj:Destroy()
+            end
+        end
+    end
+    handEffects = {}
+    
+    if enable then
+        -- Criar novos efeitos
+        local rightHand = character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm")
+        local leftHand = character:FindFirstChild("LeftHand") or character:FindFirstChild("Left Arm")
+        
+        if rightHand then
+            table.insert(handEffects, createHandEffect(rightHand))
+        end
+        if leftHand then
+            table.insert(handEffects, createHandEffect(leftHand))
+        end
+        
+        -- Criar barreira de blocos
+        createBarrierBlocks()
+    else
+        -- Remover barreira
+        for _, blockData in ipairs(barrierBlocks) do
+            for _, obj in ipairs(blockData) do
+                if obj and obj.Parent then
+                    obj:Destroy()
+                end
+            end
+        end
+        barrierBlocks = {}
+    end
+end
 
+-- Sistema de toggle
+local function toggleRed()
+    redActive = not redActive
+    toggleHandEffects(redActive)
+    
+    -- Atualizar UI
+    if redActive then
+        toggleButton.Text = "DESATIVAR PODER"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+        attackButton.Visible = true
+        
+        -- Conectar atualização da barreira
+        runService.Heartbeat:Connect(updateBarrier)
+    else
+        toggleButton.Text = "ATIVAR PODER"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        attackButton.Visible = false
+    end
+    
+    -- Feedback de áudio
+    local sound = Instance.new("Sound")
+    sound.SoundId = redActive and "rbxassetid://138080048" or "rbxassetid://138080038"
+    sound.Volume = 0.5
+    
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root then
+        sound.Parent = root
+    else
+        sound.Parent = workspace
+    end
+    
+    sound:Play()
+    game:GetService("Debris"):AddItem(sound, 2)
+end
+
+-- Conectar botões
+toggleButton.MouseButton1Click:Connect(toggleRed)
+attackButton.MouseButton1Click:Connect(function()
+    if not cooldown then
+        -- Implementação do ataque aqui
+        -- (mantenha a mesma do script anterior)
+    end
+end)
+
+-- Resetar ao morrer
+humanoid.Died:Connect(function()
+    toggleHandEffects(false)
+    redActive = false
+    toggleButton.Text = "ATIVAR PODER"
+    toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    attackButton.Visible = false
+end)
+
+-- Recriar ao respawnar
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoid = character:WaitForChild("Humanoid")
+    
+    humanoid.Died:Connect(function()
+        toggleHandEffects(false)
+        redActive = false
+        toggleButton.Text = "ATIVAR PODER"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        attackButton.Visible = false
+    end)
+end)
+```
+
+### Características dos blocos:
+
+1. **Formação circular**:
+   - 12 blocos vermelhos neon formando um anel ao redor do personagem
+   - Posicionados a 5 studs de distância e 3 studs de altura
+
+2. **Comportamento dinâmico**:
+   - Blocos giram suavemente ao redor do personagem
+   - Movimento orbital contínuo com física controlada
+   - Partículas vermelhas emanando de cada bloco
+
+3. **Física controlada**:
+   - `BodyGyro` para controle de rotação
+   - `BodyPosition` para manter a posição orbital
+   - Forças ajustadas para movimento suave
+
+4. **Efeitos visuais**:
+   - Transparência parcial (30%)
+   - Material neon para brilho
+   - Partículas emitindo de cada bloco
+   - Sem sombras para melhor performance
+
+### Como funciona:
+
+1. Quando você ativa o poder:
+   - Os blocos são criados ao redor do personagem
+   - Um loop contínuo atualiza suas posições a cada frame
+
+2. Quando você se move:
+   - Os blocos mantêm sua posição relativa ao personagem
+   - Continuam girando suavemente enquanto seguem você
+
+3. Quando desativa o poder:
+   - Todos os blocos são destruídos
+   - O loop de atualização é interrompido
+
+### Personalização:
+
+Você pode ajustar os parâmetros para mudar o comportamento:
+
+```lua
+-- No createBarrierBlocks():
+local numBlocks = 16     -- Mais blocos = anel mais denso
+local radius = 7         -- Raio maior = barreira mais ampla
+local height = 4         -- Altura da barreira
+
+-- No updateBarrier():
+local rotationSpeed = 2  -- Velocidade de rotação (valor mais alto = mais rápido)
+local angle = (i / #barrierBlocks) * math.pi * 2 + time * rotationSpeed
